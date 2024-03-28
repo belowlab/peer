@@ -1,0 +1,37 @@
+name: Package Python
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Miniconda   
+      uses: conda-incubator/setup-miniconda@v3.0.3
+      with:
+        mamba-version: "*"
+        channel-priority: true
+        activate-environment: peer
+        environment-file: peer-environment.yml
+    
+    - name: Assemble Python source package
+      run: |
+        pushd conda_forge_python
+        bash create_python_package.sh
+        popd
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package
+        path: conda_forge_python/peer/dist/peer-*.tar.gz

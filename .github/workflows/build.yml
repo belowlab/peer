@@ -1,0 +1,100 @@
+# This starter workflow is for a CMake project running on a single platform. There is a different starter workflow if you need cross-platform coverage.
+# See: https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
+name: Package and compile Peer across OSes and archs
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
+    # You can convert this to a matrix build if you need cross-platform coverage.
+    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Miniconda   
+      uses: conda-incubator/setup-miniconda@v3.0.3
+      with:
+        mamba-version: "*"
+        channel-priority: true
+        activate-environment: peer
+        environment-file: peer-environment.yml
+
+    - name: Configure CMake
+      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Assemble R source package
+      run: |
+        pushd cran
+        bash create_source_new.sh
+        popd
+    
+    - name: Assemble Python source package
+      run: |
+        pushd standalone_python
+        bash create_python_package.sh
+        popd
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: peertool
+        path: build/src/peertool
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: r-python-packages
+        path: |
+          cran/peer_*.tar.gz
+          standalone_python/peer/dist/peer-*.tar.gz
+
+  cibuildwheel:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    needs: build
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: r-python-packages
+
+    - name: cibuildwheel for python
+      uses: pypa/cibuildwheel@v2.16.5
+      with:
+        package-dir: standalone_python/peer/dist/peer-2.0.0.tar.gz
+      env:
+        CIBW_ARCHS_MACOS: x86_64 arm64
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+        path: ./wheelhouse/*.whl
+
+    - name: Set up R
+      uses: r-lib/actions/setup-r@v2
+    - run: Rscript -e 'install.packages("BH", "RccpEigen")'
+
+    - name: Test R on this platform
+      run: R CMD check --as-cran cran/peer_2.0.tar.gz
